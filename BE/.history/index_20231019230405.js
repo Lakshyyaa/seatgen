@@ -1,0 +1,16 @@
+// for seat allocation
+// have an lt database, with number of rows and collumns
+// have a teachers database, with their dep, free/not
+// input the subject name and student list xlsx sheet, which will be returned with seats, mail or download
+const xlsx = require('xlsx');
+const workbook = xlsx.readFile('lt.xlsx');
+
+// Assuming there is only one sheet in the Excel file, you can access it like this:
+const sheetName = workbook.SheetNames[0];
+const sheet = workbook.Sheets[sheetName];
+
+// Convert the sheet data to a JSON object
+const jsonData = xlsx.utils.sheet_to_json(sheet);
+
+// Print the JSON data to the console
+console.log(jsonData);
