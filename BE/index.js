@@ -5,8 +5,12 @@
 // input the subject name and student list xlsx sheet, which will be returned with seats, mail or download
 // rows are from A-Z and collumns form 1-10
 // ADD INVIGILATION IN IT TOO, test case if free teachers not found
+
+
 const xlsx = require('xlsx');
 const fs = require('fs');
+const mongoose = require('mongoose');
+const connectDB = require('./db.js');
 
 
 // The function below fetches the sheet and returns its json to be processed from further
@@ -16,6 +20,34 @@ function getsheet(x) {
     const sheet = workbook.Sheets[sheetName];
     const sheetdata = xlsx.utils.sheet_to_json(sheet);
     return sheetdata
+}
+
+
+// The function below does the invigilationgen and is called in the seatgen function
+async function invigilation(newdata, subname) {
+    await connectDB()
+    const Teacher = mongoose.model('Teacher', {
+        name: String,
+        subject: String,
+        free: Number,
+    });
+    const teachers = await Teacher.find();
+    let i = 0
+    let j = 0;
+    for (const element of newdata) {
+        if (i % 20 == 0) {
+            while (teachers[j].subject == subname || teachers[j].free == 0) {
+                j++
+            }
+            await Teacher.updateOne({ _id: teachers[j]._id }, { $set: { free: 0 } })
+            element.INVI = teachers[j].name
+        }
+        else {
+            element.INVI = teachers[j].name
+        }
+        i++;
+    }
+    writetosheet(newdata, subname)
 }
 
 
@@ -57,6 +89,12 @@ function seatgen(subname, inputstudentlist, ltsheetname) {
             break;
         }
     }
+    invigilation(newdata, subname);
+}
+
+
+// The function below writes to sheet we want the data we want
+function writetosheet(newdata, subname) {
     const wb = xlsx.utils.book_new();
     const ws_name = "Sheet1";
     // Convert the array of objects to a worksheet
