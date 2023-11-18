@@ -24,6 +24,7 @@ function getsheet(x) {
 
 
 // The function below does the invigilationgen and is called in the seatgen function
+// Return false if not enough teachers availabe or if calendar is filled.
 async function invigilation(newdata, subname) {
     await connectDB()
     const Teacher = mongoose.model('Teacher', {
@@ -31,15 +32,27 @@ async function invigilation(newdata, subname) {
         subject: String,
         free: Number,
     });
-    const teachers = await Teacher.find();
+    let teachers = await Teacher.find();
+    const numofteachers = teachers.length
     let i = 0
     let j = 0;
+    let teachersnotfree=[]
     for (const element of newdata) {
         if (i % 20 == 0) {
-            while (teachers[j].subject == subname || teachers[j].free == 0) {
+            while (j < numofteachers && (teachers[j].subject == subname || teachers[j].free == 0)) {
                 j++
+                console.log('j increased.')
             }
-            await Teacher.updateOne({ _id: teachers[j]._id }, { $set: { free: 0 } })
+            if (j >= numofteachers) {
+                // write code to return denial of request as no teacher available
+                // return 0;
+                // return right thing, to let user know what error/right thing has happend
+                break;
+                // putting break right now as i want it to work even for less teachers
+            }
+
+            teachersnotfree.push(teachers[j]._id)
+            teachers[j].free = 0;
             element.INVI = teachers[j].name
         }
         else {
@@ -47,7 +60,18 @@ async function invigilation(newdata, subname) {
         }
         i++;
     }
+    // below code updated the teachers to not free
+    try{
+        await Teacher.updateMany({ _id: { $in: teachersnotfree } }, { $set: { free: 0 } });
+        console.log('updated db')
+    }
+    catch(err)
+    {
+        console.error(err)
+    }
     writetosheet(newdata, subname)
+    return 1;
+    // return right thing, to let user know what error/right thing has happend
 }
 
 
@@ -90,19 +114,30 @@ function seatgen(subname, inputstudentlist, ltsheetname) {
         }
     }
     invigilation(newdata, subname);
+    // return right thing, to let user know what error/right thing has happend
+    return 1;
 }
 
 
 // The function below writes to sheet we want the data we want
 function writetosheet(newdata, subname) {
-    const wb = xlsx.utils.book_new();
-    const ws_name = "Sheet1";
-    // Convert the array of objects to a worksheet
-    const ws = xlsx.utils.json_to_sheet(newdata);
-    // Add the worksheet to the workbook
-    xlsx.utils.book_append_sheet(wb, ws, ws_name);
-    // Write the workbook to a file
-    xlsx.writeFile(wb, `${subname}` + 'arrangement.xlsx');
+    try {
+        const wb = xlsx.utils.book_new();
+        const ws_name = "Sheet1";
+        // Convert the array of objects to a worksheet
+        const ws = xlsx.utils.json_to_sheet(newdata);
+        // Add the worksheet to the workbook
+        xlsx.utils.book_append_sheet(wb, ws, ws_name);
+        // Write the workbook to a file
+        xlsx.writeFile(wb, `${subname}arrangement.xlsx`);
+        console.log('File written successfully.');
+        // return right thing, to let user know what error/right thing has happend
+        return 1;
+    } catch (error) {
+        console.error('Error writing to file:', error);
+        // return right thing, to let user know what error/right thing has happend
+        return 0;
+    }
 }
 
 let subname = 'A' // will come from frontend
