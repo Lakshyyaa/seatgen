@@ -2,13 +2,28 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const connectDB = require('./db.js');
+const Hall = mongoose.model('Hall', {
+    hall: Number,
+    free: Number,
+    row: Number,
+    collumn: Number,
+});
 
-function fetchSheet(x) {
-    const workbook = xlsx.readFile(x);
-    const sheetName = workbook.SheetNames[0];   
-    const sheet = workbook.Sheets[sheetName];
-    const sheetData = xlsx.utils.sheet_to_json(sheet);
-    return sheetData;
+async function fetchSheet(filePath) {
+    const url = `https://api.github.com/repos/Lakshyyaa/emscdn/contents/files/${filePath}`;
+    try {
+        const response = await axios.get(url);
+        const base64Content = response.data.content;
+        const fileBuffer = Buffer.from(base64Content, 'base64');
+        const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+        console.log(sheetData)
+        return sheetData
+    } catch (error) {
+        console.error('Error fetching sheet:', error.message);
+        throw error;
+    }
 }
 
 async function invigilationGen(newData, subName) {
@@ -24,7 +39,7 @@ async function invigilationGen(newData, subName) {
     let j = 0;
     let teachersNotFree = [];
 
-    for (const element of newData) {
+    for (let element of newData) {
         if (i % 20 == 0) {
             while (j < numOfTeachers && (teachers[j].subject == subName || teachers[j].free == 0)) {
                 j++;
@@ -37,7 +52,6 @@ async function invigilationGen(newData, subName) {
                 break;
                 // putting break right now as I want it to work even for fewer teachers
             }
-
             teachersNotFree.push(teachers[j]._id);
             teachers[j].free = 0;
             element.INVI = teachers[j].name;
@@ -59,7 +73,7 @@ async function invigilationGen(newData, subName) {
     // return the right thing, to let the user know what error/right thing has happened
 }
 
-function seatGen(subName, inputStudentList, ltSheetName) {
+async function seatGen(subName, inputStudentList, ltSheetName) {
     // delete the arrangement file, just to refresh
     fs.unlink(`${subName}` + 'arrangement.xlsx', (err) => {
         if (err) {
@@ -73,6 +87,7 @@ function seatGen(subName, inputStudentList, ltSheetName) {
     let studentList = fetchSheet(inputStudentList);
     let numberOfStudents = studentList.length;
     let ltSheet = fetchSheet(ltSheetName);
+    //  U S E   A   H A L L S   D A T A B A S E : FREE, NAME, CAPACITY  
     // HERE WE SEE IF ENOUGH SEATS AVAILABLE TO SEND A BIG FOFF
     // BUT REMEMBER TO ADD AN AVAILABLE COLUMN TO IT AS WELL 0/1
     // THAT WILL BE CHANGED JUST LIKE THE TEACHERDB IN THE END OF THIS FUNCTION.

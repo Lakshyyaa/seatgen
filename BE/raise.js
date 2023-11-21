@@ -4,11 +4,11 @@
 // UPON LOGIN OF A TEACHER, WHENEVER THE TEACHER TYPES IN THE TIME, THE FRONTEND CHECKS IN THE DB
 // 1. IF THE TEACHER HAS SCHEDULED ONE ALREADY AS ONE REQUEST PER TEACHER UNTIL CONCLUDED
 // 2. OR IF THE TIME SLOT IS BOOKED AND RETURN FOFF IF SO OR
-// 3. IF SEATS ENOUGH (WRITE ITS FUNCTIONS WHICH SEES AVAILABLE COLLUMNS IN EXCEL SHEET OF LT)
+// 3. IF SEATS ENOUGH (WRITE ITS FUNCTIONS WHICH SEES AVAILABLE COLLUMNS IN EXCEL SHEET OF LT) - W R I T E
 // EACH SUB CAN HAVE ONLY ONE EXAM PER TIME AND NO REQUESTS UNTIL NEW OCCURRED.
 
 // THE FRONTEND RECEIVES THE XLSX SHEET AND UPLOADS THEM TO GITHUB, THEN SEND THE DATA AS SCHEMA OBJECT TO BACKEND
-// AND GETS STORED IN MONGODB
+// AND GETS STORED IN MONGODB - W R I T E
 
 // ON OPENING THE ACCOUNT, THE ADMIN CAN VIEW ALL THE REQUESTS, THEN TAKE THE ACTION:
 // 1. ANNOUNCEMENT: SEND EMAIL TO THE STUDENTS IN THE SHEET AFTER FETCHING IT, AND WRITE THE E-MAIL
@@ -16,103 +16,175 @@
 
 // AFTER THE WORK IS DONE, IT DELETES THE SHEET FROM THE REPO, ADD TO CALENDAR, REMOVE FROM REQUESTS.
 // THE NAME OF THE SHEET IS SUB_STUDENTS
+// DO CTRL+F AND SEARCH FOR HALLS AND ADD LOGIC TO CALCULATE AND USE HALLS IN THE CODE BELOW MARK/UNMARK
 
 
-const { Octokit } = require('@octokit/rest');
-const fs = require('fs');
-const axios = require('axios');
+// THE BELOW CODE IS FOR THE SCHEMA OF SCHEDULED EXAMS AND REQUESTS PENDING AND THEIR USE
+const mongoose = require('mongoose')
 const xlsx = require('xlsx')
+const connectDB = require('./db.js');
+const maxhalls = 17 // shweta maam told us that we can have halls uniform and equal, 
+// though seatgen function works regardless, just counting seats will take time
 
-// Replace with your GitHub personal access token
-const token = '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';
-
-// Create an Octokit instance with authentication
-const octokit = new Octokit({
-    auth: token,
+const Schedule = mongoose.model('Schedule', {
+    subject: String,
+    start: Date,
+    end: Date,
+    halls: Number
+});
+const Request = mongoose.model('Request', {
+    subject: String,
+    start: Date,
+    end: Date,
+    link: String,
+    type: String, // can be announce cancel, announce exam, announce view sheet
 });
 
-// Replace with your GitHub username, repository name, and branch
-const owner = 'Lakshyyaa';
-const repo = 'emscdn';
-const branch = 'main';
+// FUNCTION TO PUT IN SCHEDULED
+async function addToSchedule(subName, startTime, endTime, halls) {
+    await connectDB()
+    const newSchedule = new Schedule({
+        subject: subName,
+        start: startTime,
+        end: endTime,
+        halls: halls,
+    });
 
-
-async function uploadSheet(filePath) {
     try {
-        // Read the content of the file
-        const fileContent = fs.readFileSync(filePath, 'base64');
-
-        // Create or update a file in the repository
-        const response = await octokit.repos.createOrUpdateFileContents({
-            owner,
-            repo,
-            path: 'files/' + filePath, // Replace with the desired path in your repository
-            message: 'Upload file', // Commit message
-            content: fileContent, // Convert content to base64
-            branch,
-        });
-        console.log('File uploaded successfully');
+        const result = await newSchedule.save();
+        console.log('Schedule inserted:');
     } catch (error) {
-        console.error('Error uploading file:', error.message);
+        console.error('Error inserting schedule:', error);
+    }
+}
+// FUNCTION TO PUT IN REQUESTS
+async function addToRequests(subName, startTime, endTime, link, requestType, fileName) {
+    if (checkSlot(subName, startTime, endTime, hallNeeded(fileName))) {
+        // FIRST SEND AN APPROVED THING
+        await connectDB()
+        const newRequest = new Request({
+            subject: subName,
+            start: startTime,
+            end: endTime,
+            link: link,
+            type: requestType,
+        });
+
+        try {
+            const result = await newRequest.save();
+            console.log('Request inserted:');
+        } catch (error) {
+            console.error('Error inserting request:', error);
+        }
+    }
+    else {
+        return // RETURN A DENIED THING WITH REASON
+    }
+}
+// FUNCTION TO REMOVE FROM SCHEDULED
+async function removeFromScheduled(subName) {
+    await connectDB()
+    try {
+        const result = await Schedule.deleteOne({ subject: subName });
+        if (result.deletedCount > 0) {
+            console.log(`Successfully deleted schedule with subject: ${subName}`);
+        } else {
+            console.log(`No schedule found with subject: ${subName}`);
+        }
+    } catch (error) {
+        console.error('Error removing schedule:', error);
+    }
+}
+// FUNCTION TO REMOVE FROM REQUESTS
+async function removeFromRequests(subName) {
+    await connectDB()
+    try {
+        const result = await Request.deleteOne({ subject: subName });
+        if (result.deletedCount > 0) {
+            console.log(`Successfully deleted schedule with subject: ${subName}`);
+        } else {
+            console.log(`No schedule found with subject: ${subName}`);
+        }
+    } catch (error) {
+        console.error('Error removing schedule:', error);
     }
 }
 
+// WRITE CODE TO CHECK AND CALL WHICH FOR WHICH
 
-// Function to delete a file from the repository
-async function deleteSheet(sheetName) {
+// first check if any subject has happened and needs to be removed by looking at current time
+async function checkSlot(subName, start, end, reqHalls) {
+    let approve = 1;
+    await connectDB()
+    // check the sub in requests, if present, deny and even for time clashes - W R I T E  I T  H E R E
     try {
-        // Get the current content of the file
-        const existingFile = await octokit.repos.getContent({
-            owner,
-            repo,
-            path: 'files/' + sheetName, // Adjust the path based on your repository structure
-            ref: branch,
-        });
-
-        // Delete the file
-        const response = await octokit.repos.deleteFile({
-            owner,
-            repo,
-            path: 'files/' + sheetName,
-            message: 'Delete file', // Commit message
-            sha: existingFile.data.sha, // SHA of the existing file
-            branch,
-        });
-
-        console.log('File deleted successfully');
+        const requests = await Request.find({})
+        if (requests.length > 0) {
+            console.log('1212')
+        }
+        else {
+            console.log('12')
+        }
+        // const existingRequest = await Request.findOne({ subject: subName });
+        // if (existingRequest) {
+        //     console.log(`A request for ${subName} already exists.`);
+        //     approve = 0 // return 0 for deny 1 for approved
+        // } else {
+        //     console.log(`No request found for ${subName}.`);
+        // }
     } catch (error) {
-        console.error('Error deleting file:', error.message);
+        console.error('Error checking slot:', error);
     }
-}
-
-
-// Example usage
-
-
-// Function to fetch the content of a file
-async function fetchSheet(filePath) {
-    const url = `https://api.github.com/repos/Lakshyyaa/emscdn/contents/files/${filePath}`;
-
+    // check the sub in scheduled, if time clashes and lt not available cancel
     try {
-        const response = await axios.get(url);
-        const base64Content = response.data.content;
-        const fileBuffer = Buffer.from(base64Content, 'base64');
-        const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
-        const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-        console.log(sheetData)
+        const existingSchedule = await Schedule.find({ subject: subName });
+        if (existingSchedule.length > 0) {
+            let halls = reqHalls;
+            existingSchedule.forEach(s => {
+                halls += s.halls
+                if (halls + 5 > maxhalls) {  // Always keeping a buffer of 5 halls.
+                    approve = 0  // as enough halls not left
+                }
+                if ((s.start > start && s.start < end) || (s.end > start && s.end < end)) {
+                    approve = 0; // as it overlapped with an existing schedule
+                }
+            })
+        } else {
+            console.log(`No schedule found for ${subName}.`);
+        }
     } catch (error) {
-        console.error('Error fetching sheet:', error.message);
-        throw error;
+        console.error('Error checking slot:', error);
     }
+    return approve; // all checks passed
 }
 
-
-async function main() {
-    // await uploadSheet('staff.xlsx');
-    // await fetchSheet('staff.xlsx');
-    // await deleteSheet('students.xlsx');
+function hallNeeded(fileName) {
+    const hallSize = 100;
+    const workbook = xlsx.readFile(fileName);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const sheetData = xlsx.utils.sheet_to_json(sheet);
+    console.log(sheetData.length);
+    return Math.ceil(sheetData.length / hallSize);;
 }
 
-// Run the main function
-main().catch((error) => console.error('Error:', error));
+// WRITE CODE FOR THE MOMENT LOGS IN AND THE REQUESTS AND SCHEDULED STUFF ARE SHOWN/FETCHED IN THE FRONTEND
+
+// WHENEVER SOMETHING REMOVED FROM SCHEDULED, FREE THE HALLS IN THE DB
+
+
+// const a = new Date(2023, 10, 20, 12, 30, 0)
+// const b = new Date(2023, 10, 20, 12, 45, 0)
+// const c = new Date(2023, 10, 20, 12, 50, 0)
+// addToRequests('CN', a, b, 'as', 'cancel')
+// addToRequests('CN', a, c, 'as', 'cancel')
+
+// USER SENDS REQ,
+// 1. CHECK IF REQ SECTION FULL HAS ONE, IF IT HAS, DENY
+// 2. CHECK IF THE REQ HAS ENOUGH TIME OR SLOT, IF NOT, FOFF THEN
+// 2. WHEN THE ADMIN LOGS IN, HE WILL PUSH REQ TO SCHEDULED AFTER USING THE SEATGEN/OTHER FUNCTIONS, AND DELETE
+// ITS XLSX FILE
+// 3. IF THE REQUEST IS TO CANCEL, CHECK IF EXAM HAPPENDED, ELSE REMOVE IT.
+// 4. KEEP CHECKING TIME IF EXAM PASSED, REMOVE IT FOM THE SCHEDULE.
+
+// WRITE THE ABOVE CODE AND WRITE FOR THE WHEN USER ACTUALLY HITS THE BUTTON TO SCHEDULE ONE
