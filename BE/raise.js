@@ -20,12 +20,20 @@
 
 
 // THE BELOW CODE IS FOR THE SCHEMA OF SCHEDULED EXAMS AND REQUESTS PENDING AND THEIR USE
+
+
 const mongoose = require('mongoose')
 const xlsx = require('xlsx')
 const connectDB = require('./db.js');
 const maxhalls = 17 // shweta maam told us that we can have halls uniform and equal, 
 // though seatgen function works regardless, just counting seats will take time
 
+const Hall = mongoose.model('Hall', {
+    hall: Number,
+    free: Number,
+    row: Number,
+    collumn: Number,
+});
 const Schedule = mongoose.model('Schedule', {
     subject: String,
     start: Date,
@@ -37,10 +45,10 @@ const Request = mongoose.model('Request', {
     start: Date,
     end: Date,
     link: String,
-    type: String, // can be announce cancel, announce exam, announce view sheet
+    type: String, // can be announce 'cancel', 'schedule' exam, announce 'view' sheet
 });
 
-// FUNCTION TO PUT IN SCHEDULED
+
 async function addToSchedule(subName, startTime, endTime, halls) {
     await connectDB()
     const newSchedule = new Schedule({
@@ -52,15 +60,17 @@ async function addToSchedule(subName, startTime, endTime, halls) {
 
     try {
         const result = await newSchedule.save();
-        console.log('Schedule inserted:');
+        console.log('Schedule inserted:', result);
     } catch (error) {
         console.error('Error inserting schedule:', error);
     }
 }
-// FUNCTION TO PUT IN REQUESTS
+
+
 async function addToRequests(subName, startTime, endTime, link, requestType, fileName) {
-    if (checkSlot(subName, startTime, endTime, hallNeeded(fileName))) {
-        // FIRST SEND AN APPROVED THING
+    const approved = await checkSlot(subName, startTime, endTime, hallNeeded(fileName))
+    if (approved) {
+        // HERE FIRST SEND AN APPROVED THING
         await connectDB()
         const newRequest = new Request({
             subject: subName,
@@ -72,22 +82,51 @@ async function addToRequests(subName, startTime, endTime, link, requestType, fil
 
         try {
             const result = await newRequest.save();
-            console.log('Request inserted:');
+            console.log('Request inserted:', result);
         } catch (error) {
             console.error('Error inserting request:', error);
         }
     }
     else {
+        console.log('slot not availabale')
         return // RETURN A DENIED THING WITH REASON
     }
 }
-// FUNCTION TO REMOVE FROM SCHEDULED
+
+// ALSO ADD TO FREE THE NUMBER OF HALLS ONCE REQUEST DONE (KEEP CHECKING TIME), ALSO DO SAME FOR REQUESTS?
 async function removeFromScheduled(subName) {
     await connectDB()
+    toChange = []
+    try {
+        const result = await Schedule.findOne({ subject: subName });
+        if (result) {
+            numOfHalls = result.halls
+            const getHalls = await Hall.find({})
+            let i = 0
+            while (numOfHalls > 0) {
+                while (getHalls[i].hall == 1) {
+                    i++
+                }
+                toChange.push(getHalls[i]._id)
+                i++
+                numOfHalls--
+            }
+        } else {
+            console.log(`No schedule found with subject: ${subName}`);
+        }
+    } catch (error) {
+        console.error('Error removing schedule:', error);
+    }
+    try {
+        await Hall.updateMany({ _id: { $in: toChange } }, { $set: { free: 1 } });
+        console.log('updated db for halls');
+    } catch (err) {
+        console.error(err);
+    }
     try {
         const result = await Schedule.deleteOne({ subject: subName });
         if (result.deletedCount > 0) {
-            console.log(`Successfully deleted schedule with subject: ${subName}`);
+            console.log(`Successfully deleted schedule with subject: ${subName}: `, result);
         } else {
             console.log(`No schedule found with subject: ${subName}`);
         }
@@ -95,7 +134,8 @@ async function removeFromScheduled(subName) {
         console.error('Error removing schedule:', error);
     }
 }
-// FUNCTION TO REMOVE FROM REQUESTS
+
+
 async function removeFromRequests(subName) {
     await connectDB()
     try {
@@ -110,28 +150,25 @@ async function removeFromRequests(subName) {
     }
 }
 
-// WRITE CODE TO CHECK AND CALL WHICH FOR WHICH
-
 // first check if any subject has happened and needs to be removed by looking at current time
 async function checkSlot(subName, start, end, reqHalls) {
     let approve = 1;
     await connectDB()
-    // check the sub in requests, if present, deny and even for time clashes - W R I T E  I T  H E R E
+    let halls = reqHalls;
     try {
         const requests = await Request.find({})
-        if (requests.length > 0) {
-            console.log('1212')
-        }
-        else {
-            console.log('12')
-        }
-        // const existingRequest = await Request.findOne({ subject: subName });
-        // if (existingRequest) {
-        //     console.log(`A request for ${subName} already exists.`);
-        //     approve = 0 // return 0 for deny 1 for approved
-        // } else {
-        //     console.log(`No request found for ${subName}.`);
-        // }
+        requests.forEach(r => {
+            halls += r.halls
+            if (r.subject == subName) {
+                approve = 0
+            }
+            else if ((r.start > start && r.start < end) || (r.end > start && r.end < end)) {
+                approve = 0
+            }
+            else if (halls + 5 > maxhalls) {
+                approve = 0
+            }
+        })
     } catch (error) {
         console.error('Error checking slot:', error);
     }
@@ -139,18 +176,15 @@ async function checkSlot(subName, start, end, reqHalls) {
     try {
         const existingSchedule = await Schedule.find({ subject: subName });
         if (existingSchedule.length > 0) {
-            let halls = reqHalls;
             existingSchedule.forEach(s => {
                 halls += s.halls
                 if (halls + 5 > maxhalls) {  // Always keeping a buffer of 5 halls.
                     approve = 0  // as enough halls not left
                 }
-                if ((s.start > start && s.start < end) || (s.end > start && s.end < end)) {
+                else if ((s.start > start && s.start < end) || (s.end > start && s.end < end)) {
                     approve = 0; // as it overlapped with an existing schedule
                 }
             })
-        } else {
-            console.log(`No schedule found for ${subName}.`);
         }
     } catch (error) {
         console.error('Error checking slot:', error);
@@ -159,25 +193,26 @@ async function checkSlot(subName, start, end, reqHalls) {
 }
 
 function hallNeeded(fileName) {
-    const hallSize = 100;
+    const hallCapacity = 100;
     const workbook = xlsx.readFile(fileName);
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     const sheetData = xlsx.utils.sheet_to_json(sheet);
-    console.log(sheetData.length);
-    return Math.ceil(sheetData.length / hallSize);;
+    const numStudents = sheetData.length
+    return Math.ceil(numStudents / hallSize);
 }
 
-// WRITE CODE FOR THE MOMENT LOGS IN AND THE REQUESTS AND SCHEDULED STUFF ARE SHOWN/FETCHED IN THE FRONTEND
 
-// WHENEVER SOMETHING REMOVED FROM SCHEDULED, FREE THE HALLS IN THE DB
-
-
-// const a = new Date(2023, 10, 20, 12, 30, 0)
-// const b = new Date(2023, 10, 20, 12, 45, 0)
-// const c = new Date(2023, 10, 20, 12, 50, 0)
-// addToRequests('CN', a, b, 'as', 'cancel')
-// addToRequests('CN', a, c, 'as', 'cancel')
+async function main() {
+    const a = new Date(2023, 10, 20, 12, 30, 0)
+    const b = new Date(2023, 10, 20, 12, 45, 0)
+    const c = new Date(2023, 10, 20, 12, 50, 0)
+    // await addToSchedule('CN',a,b,6)
+    await removeFromScheduled('CN')
+    // await addToRequests('CN', a, b, 'as', 'cancel', 'staff.xlsx')
+    // await addToRequests('CN', a, c, 'as', 'cancel', 'staff.xlsx')
+}
+main().catch(err => console.log(err))
 
 // USER SENDS REQ,
 // 1. CHECK IF REQ SECTION FULL HAS ONE, IF IT HAS, DENY
@@ -188,3 +223,10 @@ function hallNeeded(fileName) {
 // 4. KEEP CHECKING TIME IF EXAM PASSED, REMOVE IT FOM THE SCHEDULE.
 
 // WRITE THE ABOVE CODE AND WRITE FOR THE WHEN USER ACTUALLY HITS THE BUTTON TO SCHEDULE ONE
+
+
+
+// 1. M A I N  :  KEEP CHECKING FOR WHEN AN EXAM ENDED, REMOVE IT FROM THE SCHEDULED, FETCH AND DELETE FROM GITHUB
+// THEN READ IT AND FREE ALL THOSE HALLS AND TEACHERS
+// FOR THIS TO WORK, AFTER COMPLETING SEATGEN PUSH THIS TO GITHUB TOO.  
+// 2. WE HAVE INFINITE TEACHERS.

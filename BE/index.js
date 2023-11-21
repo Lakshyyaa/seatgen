@@ -1,6 +1,7 @@
 const xlsx = require('xlsx');
 const fs = require('fs');
 const mongoose = require('mongoose');
+const axios = require('axios');
 const connectDB = require('./db.js');
 const Hall = mongoose.model('Hall', {
     hall: Number,
@@ -8,6 +9,9 @@ const Hall = mongoose.model('Hall', {
     row: Number,
     collumn: Number,
 });
+// ADD A FEATURE TO ALTER SEATS? NOT IMPORTANT THOUGH
+
+// AFTER SEATGEN INITIATED BY THE ADMIN, IT MAY RETURN DENY AS IT COULD
 
 async function fetchSheet(filePath) {
     const url = `https://api.github.com/repos/Lakshyyaa/emscdn/contents/files/${filePath}`;
@@ -18,7 +22,6 @@ async function fetchSheet(filePath) {
         const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
         const sheetName = workbook.SheetNames[0];
         const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-        console.log(sheetData)
         return sheetData
     } catch (error) {
         console.error('Error fetching sheet:', error.message);
@@ -45,13 +48,6 @@ async function invigilationGen(newData, subName) {
                 j++;
                 console.log('j increased.');
             }
-            if (j >= numOfTeachers) {
-                // write code to return denial of request as no teacher available
-                // return 0;
-                // return right thing, to let the user know what error/right thing has happened
-                break;
-                // putting break right now as I want it to work even for fewer teachers
-            }
             teachersNotFree.push(teachers[j]._id);
             teachers[j].free = 0;
             element.INVI = teachers[j].name;
@@ -73,7 +69,7 @@ async function invigilationGen(newData, subName) {
     // return the right thing, to let the user know what error/right thing has happened
 }
 
-async function seatGen(subName, inputStudentList, ltSheetName) {
+async function seatGen(subName, inputStudentList) {
     // delete the arrangement file, just to refresh
     fs.unlink(`${subName}` + 'arrangement.xlsx', (err) => {
         if (err) {
@@ -84,27 +80,30 @@ async function seatGen(subName, inputStudentList, ltSheetName) {
     });
 
     // main function starts from here
-    let studentList = fetchSheet(inputStudentList);
+    await connectDB()
+    let studentList = await fetchSheet(inputStudentList);
     let numberOfStudents = studentList.length;
-    let ltSheet = fetchSheet(ltSheetName);
+    let ltSheet = await Hall.find({})
     //  U S E   A   H A L L S   D A T A B A S E : FREE, NAME, CAPACITY  
     // HERE WE SEE IF ENOUGH SEATS AVAILABLE TO SEND A BIG FOFF
     // BUT REMEMBER TO ADD AN AVAILABLE COLUMN TO IT AS WELL 0/1
     // THAT WILL BE CHANGED JUST LIKE THE TEACHERDB IN THE END OF THIS FUNCTION.
     let newData = [];
+    let notFree = []
     var studentIndex = 0;
-
-    for (let i = 0; i < ltSheet.length; i++) {
-        var rowsOfLt = ltSheet[i].ROW;
+    let i = 0
+    while (i < ltSheet.length) {
+        var rowsOfLt = ltSheet[i].row;
         var row = 1;
-
+        while (ltSheet[i].free == 0) {
+            i++
+        }
         while (studentIndex < numberOfStudents && row <= rowsOfLt) {
-            var collumnsOfLt = ltSheet[i].COLLUMN;
+            var collumnsOfLt = ltSheet[i].collumn;
             var collumn = (row - 1) % 3 + 1;
 
             while (studentIndex < numberOfStudents && collumn <= collumnsOfLt) {
-                // can add the logic here for invigilation
-                studentList[studentIndex].LT = ltSheet[i].LT;
+                studentList[studentIndex].LT = ltSheet[i].hall;
                 studentList[studentIndex].SEAT = row + '' + String.fromCharCode(collumn + 64);
                 newData.push(studentList[studentIndex]);
                 studentIndex++;
@@ -114,9 +113,20 @@ async function seatGen(subName, inputStudentList, ltSheetName) {
         }
         if (studentIndex >= numberOfStudents) {
             break;
+            // NEED TO CHECK IF LESS STUDENTS?
         }
+        console.log(ltSheet[i].hall)
+        ltSheet[i].free = 0
+        notFree.push(ltSheet[i]._id)
+        i++
     }
-
+    // console.log(newData)
+    try {
+        await Hall.updateMany({ _id: { $in: notFree } }, { $set: { free: 0 } });
+        console.log('updated db for halls');
+    } catch (err) {
+        console.error(err);
+    }
     invigilationGen(newData, subName);
     // return the right thing, to let the user know what error/right thing has happened
     return 1;
@@ -143,7 +153,6 @@ function writeToSheet(newData, subName) {
     }
 }
 
-let subName = 'A'; // will come from frontend
+let subName = 'CN'; // will come from frontend
 let inputStudentList = 'students.xlsx'; // will come from frontend
-let ltSheetName = 'lt.xlsx'; // will be stored in backend
-seatGen(subName, inputStudentList, ltSheetName);
+seatGen(subName, inputStudentList);

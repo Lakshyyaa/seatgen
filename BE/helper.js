@@ -72,4 +72,4 @@ async function fetchSheet(filePath) {
         throw error;
     }
 }
-fetchSheet('staff.xlsx')
+uploadSheet('students.xlsx')

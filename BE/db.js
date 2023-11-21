@@ -80,6 +80,3 @@ module.exports = connectDB
 // // Close the Mongoose connection
 // await mongoose.connection.close();
 // console.log('Connection closed');
-
-
-
